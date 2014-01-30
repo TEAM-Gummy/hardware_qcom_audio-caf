@@ -84,6 +84,9 @@ static const int pcm_device_table[AUDIO_USECASE_MAX][2] = {
     [USECASE_AUDIO_RECORD_COMPRESS] = {COMPRESS_CAPTURE_DEVICE, COMPRESS_CAPTURE_DEVICE},
     [USECASE_AUDIO_RECORD_LOW_LATENCY] = {LOWLATENCY_PCM_DEVICE,
                                           LOWLATENCY_PCM_DEVICE},
+    [USECASE_AUDIO_RECORD_FM_VIRTUAL] = {MULTIMEDIA2_PCM_DEVICE,
+                                  MULTIMEDIA2_PCM_DEVICE},
+    [USECASE_AUDIO_PLAYBACK_FM] = {FM_PLAYBACK_PCM_DEVICE, FM_CAPTURE_PCM_DEVICE},
     [USECASE_AUDIO_HFP_SCO] = {HFP_PCM_RX, HFP_SCO_RX},
     [USECASE_VOICE_CALL] = {VOICE_CALL_PCM_DEVICE, VOICE_CALL_PCM_DEVICE},
     [USECASE_VOICE2_CALL] = {VOICE2_CALL_PCM_DEVICE, VOICE2_CALL_PCM_DEVICE},
@@ -132,6 +135,7 @@ static char * device_table[SND_DEVICE_MAX] = {
     [SND_DEVICE_OUT_AFE_PROXY] = "afe-proxy",
     [SND_DEVICE_OUT_USB_HEADSET] = "usb-headphones",
     [SND_DEVICE_OUT_SPEAKER_AND_USB_HEADSET] = "speaker-and-usb-headphones",
+    [SND_DEVICE_OUT_TRANSMISSION_FM] = "transmission-fm",
     [SND_DEVICE_OUT_ANC_HEADSET] = "anc-headphones",
     [SND_DEVICE_OUT_ANC_FB_HEADSET] = "anc-fb-headphones",
     [SND_DEVICE_OUT_VOICE_ANC_HEADSET] = "voice-anc-headphones",
@@ -176,7 +180,8 @@ static char * device_table[SND_DEVICE_MAX] = {
     [SND_DEVICE_IN_VOICE_REC_DMIC_STEREO] = "voice-rec-dmic-ef",
     [SND_DEVICE_IN_VOICE_REC_DMIC_FLUENCE] = "voice-rec-dmic-ef-fluence",
     [SND_DEVICE_IN_USB_HEADSET_MIC] = "usb-headset-mic",
-   [SND_DEVICE_IN_AANC_HANDSET_MIC] = "aanc-handset-mic",
+    [SND_DEVICE_IN_CAPTURE_FM] = "capture-fm",
+    [SND_DEVICE_IN_AANC_HANDSET_MIC] = "aanc-handset-mic",
     [SND_DEVICE_IN_QUAD_MIC] = "quad-mic",
     [SND_DEVICE_IN_HANDSET_STEREO_DMIC] = "handset-stereo-dmic-ef",
     [SND_DEVICE_IN_SPEAKER_STEREO_DMIC] = "speaker-stereo-dmic-ef",
@@ -204,6 +209,7 @@ static int acdb_device_table[SND_DEVICE_MAX] = {
     [SND_DEVICE_OUT_AFE_PROXY] = 0,
     [SND_DEVICE_OUT_USB_HEADSET] = 0,
     [SND_DEVICE_OUT_SPEAKER_AND_USB_HEADSET] = 14,
+    [SND_DEVICE_OUT_TRANSMISSION_FM] = 0,
     [SND_DEVICE_OUT_ANC_HEADSET] = 26,
     [SND_DEVICE_OUT_ANC_FB_HEADSET] = 27,
     [SND_DEVICE_OUT_VOICE_ANC_HEADSET] = 26,
@@ -247,6 +253,7 @@ static int acdb_device_table[SND_DEVICE_MAX] = {
     [SND_DEVICE_IN_VOICE_REC_DMIC_STEREO] = 34,
     [SND_DEVICE_IN_VOICE_REC_DMIC_FLUENCE] = 41,
     [SND_DEVICE_IN_USB_HEADSET_MIC] = 44,
+    [SND_DEVICE_IN_CAPTURE_FM] = 0,
     [SND_DEVICE_IN_AANC_HANDSET_MIC] = 104,
     [SND_DEVICE_IN_QUAD_MIC] = 46,
     [SND_DEVICE_IN_HANDSET_STEREO_DMIC] = 34,
@@ -614,6 +621,10 @@ void platform_add_backend_name(char *mixer_path, snd_device_t snd_device)
                 MIXER_PATH_MAX_LENGTH);
     else if (snd_device == SND_DEVICE_IN_USB_HEADSET_MIC)
         strlcat(mixer_path, " usb-headset-mic", MIXER_PATH_MAX_LENGTH);
+    else if (snd_device == SND_DEVICE_IN_CAPTURE_FM)
+        strlcat(mixer_path, " capture-fm", MIXER_PATH_MAX_LENGTH);
+    else if (snd_device == SND_DEVICE_OUT_TRANSMISSION_FM)
+        strlcat(mixer_path, " transmission-fm", MIXER_PATH_MAX_LENGTH);
 }
 
 int platform_get_pcm_device_id(audio_usecase_t usecase, int device_type)
@@ -866,6 +877,8 @@ snd_device_t platform_get_output_snd_device(void *platform, audio_devices_t devi
         } else if (devices & AUDIO_DEVICE_OUT_ANLG_DOCK_HEADSET ||
                    devices & AUDIO_DEVICE_OUT_DGTL_DOCK_HEADSET) {
             snd_device = SND_DEVICE_OUT_USB_HEADSET;
+        } else if (devices & AUDIO_DEVICE_OUT_FM_TX) {
+            snd_device = SND_DEVICE_OUT_TRANSMISSION_FM;
         } else if (devices & AUDIO_DEVICE_OUT_EARPIECE) {
             if (audio_extn_should_use_handset_anc(channel_count))
                 snd_device = SND_DEVICE_OUT_ANC_HANDSET;
@@ -933,6 +946,8 @@ snd_device_t platform_get_output_snd_device(void *platform, audio_devices_t devi
     } else if (devices & AUDIO_DEVICE_OUT_ANLG_DOCK_HEADSET ||
                devices & AUDIO_DEVICE_OUT_DGTL_DOCK_HEADSET) {
         snd_device = SND_DEVICE_OUT_USB_HEADSET;
+    } else if (devices & AUDIO_DEVICE_OUT_FM_TX) {
+        snd_device = SND_DEVICE_OUT_TRANSMISSION_FM;
     } else if (devices & AUDIO_DEVICE_OUT_EARPIECE) {
         snd_device = SND_DEVICE_OUT_HANDSET;
     } else if (devices & AUDIO_DEVICE_OUT_PROXY) {
@@ -1115,6 +1130,9 @@ snd_device_t platform_get_input_snd_device(void *platform, audio_devices_t out_d
                     my_data->fluence_in_audio_rec)
                 snd_device = SND_DEVICE_IN_HANDSET_DMIC;
         }
+    } else if (source == AUDIO_SOURCE_FM_RX ||
+               source == AUDIO_SOURCE_FM_RX_A2DP) {
+        snd_device = SND_DEVICE_IN_CAPTURE_FM;
     } else if (source == AUDIO_SOURCE_DEFAULT) {
         goto exit;
     }
@@ -1148,6 +1166,8 @@ snd_device_t platform_get_input_snd_device(void *platform, audio_devices_t out_d
         } else if (in_device & AUDIO_DEVICE_IN_ANLG_DOCK_HEADSET ||
                    in_device & AUDIO_DEVICE_IN_DGTL_DOCK_HEADSET) {
             snd_device = SND_DEVICE_IN_USB_HEADSET_MIC;
+        } else if (in_device & AUDIO_DEVICE_IN_FM_RX) {
+            snd_device = SND_DEVICE_IN_CAPTURE_FM;
         } else {
             ALOGE("%s: Unknown input device(s) %#x", __func__, in_device);
             ALOGW("%s: Using default handset-mic", __func__);
@@ -1511,6 +1531,8 @@ int64_t platform_render_latency(audio_usecase_t usecase)
 int platform_update_usecase_from_source(int source, int usecase)
 {
     ALOGV("%s: input source :%d", __func__, source);
+    if(source == AUDIO_SOURCE_FM_RX_A2DP)
+        usecase = USECASE_AUDIO_RECORD_FM_VIRTUAL;
     return usecase;
 }
 
