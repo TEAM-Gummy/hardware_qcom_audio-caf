@@ -18,7 +18,7 @@
  */
 
 #define LOG_TAG "msm8974_platform"
-/*#define LOG_NDEBUG 0*/
+#define LOG_NDEBUG 0
 #define LOG_NDDEBUG 0
 
 #include <stdlib.h>
@@ -133,6 +133,7 @@ static const int pcm_device_table[AUDIO_USECASE_MAX][2] = {
     [USECASE_VOICE2_CALL] = {VOICE2_CALL_PCM_DEVICE, VOICE2_CALL_PCM_DEVICE},
     [USECASE_VOLTE_CALL] = {VOLTE_CALL_PCM_DEVICE, VOLTE_CALL_PCM_DEVICE},
     [USECASE_QCHAT_CALL] = {QCHAT_CALL_PCM_DEVICE, QCHAT_CALL_PCM_DEVICE},
+    [USECASE_VOWLAN_CALL] = {VOWLAN_CALL_PCM_DEVICE, VOWLAN_CALL_PCM_DEVICE},
     [USECASE_COMPRESS_VOIP_CALL] = {COMPRESS_VOIP_CALL_PCM_DEVICE, COMPRESS_VOIP_CALL_PCM_DEVICE},
     [USECASE_INCALL_REC_UPLINK] = {AUDIO_RECORD_PCM_DEVICE,
                                    AUDIO_RECORD_PCM_DEVICE},
@@ -1261,6 +1262,7 @@ snd_device_t platform_get_input_snd_device(void *platform, audio_devices_t out_d
             }
         } else if (out_device & AUDIO_DEVICE_OUT_WIRED_HEADSET) {
             snd_device = SND_DEVICE_IN_VOICE_HEADSET_MIC;
+            set_echo_reference(adev->mixer, EC_REF_RX);
         } else if (out_device & AUDIO_DEVICE_OUT_ALL_SCO) {
             if (my_data->btsco_sample_rate == SAMPLE_RATE_16KHZ)
                 snd_device = SND_DEVICE_IN_BT_SCO_MIC_WB;
@@ -1279,6 +1281,7 @@ snd_device_t platform_get_input_snd_device(void *platform, audio_devices_t out_d
                 }
             } else {
                 snd_device = SND_DEVICE_IN_VOICE_SPEAKER_MIC;
+                set_echo_reference(adev->mixer, EC_REF_RX);
             }
         }
     } else if (source == AUDIO_SOURCE_CAMCORDER) {
@@ -1899,6 +1902,25 @@ bool platform_check_24_bit_support() {
     return false;
 }
 
+static unsigned int get_best_backend_sample_rate(unsigned int sample_rate) {
+
+    // codec backend can take 48K, 96K, and 192K
+    if (sample_rate <= 48000)
+        return 48000;
+    if (sample_rate <= 96000)
+        return 96000;
+    if (sample_rate <= 192000)
+        return 192000;
+    return CODEC_BACKEND_DEFAULT_SAMPLE_RATE;
+}
+
+static unsigned int get_best_backend_bit_width(unsigned int bit_width) {
+
+    if (bit_width == 24)
+        return 24;
+    return CODEC_BACKEND_DEFAULT_BIT_WIDTH;
+}
+
 int platform_set_codec_backend_cfg(struct audio_device* adev,
                          unsigned int bit_width, unsigned int sample_rate)
 {
@@ -1998,6 +2020,7 @@ bool platform_check_codec_backend_cfg(struct audio_device* adev,
     bool backend_change = false;
     struct listnode *node;
     struct stream_out *out = NULL;
+    unsigned int cur_sr, cur_bw, best_bw = 0, best_sr = 0;
 
     // For voice calls use default configuration
     // force routing is not required here, caller will do it anyway
@@ -2016,22 +2039,27 @@ bool platform_check_codec_backend_cfg(struct audio_device* adev,
         list_for_each(node, &adev->usecase_list) {
             struct audio_usecase *curr_usecase;
             curr_usecase = node_to_item(node, struct audio_usecase, list);
-            if (curr_usecase->id == USECASE_AUDIO_PLAYBACK_OFFLOAD) {
-                struct stream_out *out =
-                           (struct stream_out*) curr_usecase->stream.out;
-                if (out != NULL ) {
-                    ALOGV("Offload playback running bw %d sr %d",
-                              out->bit_width, out->sample_rate);
-                    if (*new_bit_width != out->bit_width) {
-                        *new_bit_width = out->bit_width;
-                    }
-                    if (*new_sample_rate != out->sample_rate) {
-                        *new_sample_rate = out->sample_rate;
-                    }
+            struct stream_out *out =
+                       (struct stream_out*) curr_usecase->stream.out;
+            if (out != NULL) {
+                cur_sr = get_best_backend_sample_rate(out->sample_rate);
+                cur_bw = get_best_backend_bit_width(out->bit_width);
+
+                ALOGV("Playback running bw %d sr %d standby %d",
+                          cur_bw, cur_sr, out->standby);
+
+                if (cur_bw > best_bw) {
+                    best_bw = cur_bw;
+                }
+
+                if (cur_sr > best_sr) {
+                    best_sr = cur_sr;
                 }
             }
         }
     }
+    *new_bit_width = best_bw;
+    *new_sample_rate = best_sr;
 
     // Force routing if the expected bitwdith or samplerate
     // is not same as current backend comfiguration
@@ -2054,11 +2082,11 @@ bool platform_check_and_set_codec_backend_cfg(struct audio_device* adev, struct 
 
     ALOGV("platform_check_and_set_codec_backend_cfg usecase = %d",usecase->id );
 
-    unsigned int new_bit_width, old_bit_width;
-    unsigned int new_sample_rate, old_sample_rate;
+    unsigned int new_bit_width = 0, old_bit_width;
+    unsigned int new_sample_rate = 0, old_sample_rate;
 
-    new_bit_width = old_bit_width = adev->cur_codec_backend_bit_width;
-    new_sample_rate = old_sample_rate = adev->cur_codec_backend_samplerate;
+    old_bit_width = adev->cur_codec_backend_bit_width;
+    old_sample_rate = adev->cur_codec_backend_samplerate;
 
     ALOGW("Codec backend bitwidth %d, samplerate %d", old_bit_width, old_sample_rate);
     if (platform_check_codec_backend_cfg(adev, usecase,
